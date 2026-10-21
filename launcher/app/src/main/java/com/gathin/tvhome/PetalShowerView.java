@@ -15,18 +15,22 @@ import java.util.Random;
  * just above the top edge, gathers speed as it falls, sways from side to side, spins, flips over (showing its
  * darker back) and fades out over the last quarter of its fall. Everything finishes within the given duration,
  * then the callback runs on the main thread. The view takes no focus, clicks or accessibility, uses a hardware
- * layer only while playing, and allocates nothing per frame.
+ * layer only while playing, and allocates nothing per frame. {@link #useHearts()} turns it into a shower of pink
+ * and lilac hearts for a birthday: they flutter down nearly upright instead of tumbling.
  */
 public final class PetalShowerView extends View {
 
-    private static final int[] COLORS = {0xFFFF8C1A, 0xFFFFB627, 0xFFF26A0D, 0xFFFFC93C, 0xFFE85D04};
+    private static final int[] PETALS = {0xFFFF8C1A, 0xFFFFB627, 0xFFF26A0D, 0xFFFFC93C, 0xFFE85D04};
+    private static final int[] HEARTS = {0xFFFF5FA8, 0xFFFF8CC6, 0xFFC59BFF, 0xFFE07BFF, 0xFFFFB3D9};
     private static final int EDGE = 0xFF7A2800;
     private static final double TAU = 2 * Math.PI;
 
     private final float density;
     private final Random rnd = new Random();
     private final Path[] shapes = new Path[3];
-    private final Path[] veins = new Path[3];
+    private Path[] veins = new Path[3];
+    private int[] colors = PETALS;
+    private boolean hearts;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint edge = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint vein = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -73,6 +77,14 @@ public final class PetalShowerView extends View {
         vein.setColor(EDGE);
     }
 
+    /** Hearts instead of marigold petals, for the next shower and every one after it. */
+    public void useHearts() {
+        hearts = true;
+        colors = HEARTS;
+        veins = null;
+        for (int i = 0; i < shapes.length; i++) shapes[i] = heartShape(0.46f + 0.04f * i);
+    }
+
     /**
      * Plays a shower of {@code petals} petals lasting {@code durationMs}, then runs {@code done} on the main
      * thread. Playing again before the last shower ends finishes that one first (its callback runs).
@@ -92,15 +104,17 @@ public final class PetalShowerView extends View {
             delay[i] = rnd.nextFloat() * 0.32f;             // fractions of the duration
             life[i] = 0.6f + rnd.nextFloat() * (1f - delay[i] - 0.6f);
             drop[i] = 0.8f + rnd.nextFloat() * 0.35f;       // fraction of the height fallen over its life
-            size[i] = 9f + rnd.nextFloat() * 7f;            // dp
+            size[i] = hearts ? 14f + rnd.nextFloat() * 12f : 9f + rnd.nextFloat() * 7f; // dp
             swayAmp[i] = 10f + rnd.nextFloat() * 24f;       // dp
             swayFreq[i] = 0.5f + rnd.nextFloat() * 0.6f;    // Hz
             swayPhase[i] = rnd.nextFloat() * (float) TAU;
-            rot0[i] = rnd.nextFloat() * 360f;
-            spin[i] = (40f + rnd.nextFloat() * 120f) * (rnd.nextBoolean() ? 1f : -1f); // degrees per second
+            // a heart keeps roughly upright, so it still reads as a heart while it falls
+            rot0[i] = hearts ? (rnd.nextFloat() - 0.5f) * 30f : rnd.nextFloat() * 360f;
+            spin[i] = (hearts ? rnd.nextFloat() * 12f : 40f + rnd.nextFloat() * 120f)
+                    * (rnd.nextBoolean() ? 1f : -1f);       // degrees per second
             flipFreq[i] = 0.4f + rnd.nextFloat();           // Hz
             flipPhase[i] = rnd.nextFloat() * (float) TAU;
-            color[i] = rnd.nextInt(COLORS.length);
+            color[i] = rnd.nextInt(colors.length);
             shape[i] = rnd.nextInt(shapes.length);
         }
         playing = true;
@@ -149,7 +163,7 @@ public final class PetalShowerView extends View {
 
             // turned edge-on it looks darker; the back is darker still
             float shade = (flip < 0f ? 0.78f : 1f) * (0.8f + 0.2f * Math.abs(flip));
-            int base = COLORS[color[i]];
+            int base = colors[color[i]];
             fill.setColor(scale(base, shade));
             fill.setAlpha(a);
             edge.setColor(scale(base, 0.55f));
@@ -162,7 +176,7 @@ public final class PetalShowerView extends View {
             c.scale(len * sx, len);
             c.drawPath(shapes[shape[i]], fill);
             c.drawPath(shapes[shape[i]], edge);
-            c.drawPath(veins[shape[i]], vein);
+            if (veins != null) c.drawPath(veins[shape[i]], vein);
             c.restore();
         }
         postInvalidateOnAnimation();
@@ -201,6 +215,18 @@ public final class PetalShowerView extends View {
             p.quadTo(tx, tipY, nx, notchY);
         }
         p.cubicTo(wTop + 0.04f, 0.02f, 0.16f, 0.36f, 0f, 0.5f);
+        p.close();
+        return p;
+    }
+
+    /** A heart about 1 unit tall around the origin, {@code half} wide on each side, its point down. */
+    private static Path heartShape(float half) {
+        Path p = new Path();
+        p.moveTo(0f, 0.44f);
+        p.cubicTo(-0.12f, 0.32f, -half, 0.06f, -half, -0.17f);
+        p.cubicTo(-half, -0.42f, -0.2f, -0.54f, 0f, -0.28f);
+        p.cubicTo(0.2f, -0.54f, half, -0.42f, half, -0.17f);
+        p.cubicTo(half, 0.06f, 0.12f, 0.32f, 0f, 0.44f);
         p.close();
         return p;
     }

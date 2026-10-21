@@ -195,6 +195,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private int greetingColor;
     /** The day the petal shower last played, so it greets the first Home of each day only. */
     private static LocalDate lastPetalShower;
+    /** Birthdays from config (see Birthdays); on the day the greeting, the glow and a heart shower celebrate. */
+    private Birthdays birthdays = Birthdays.NONE;
+    private boolean birthday;
+    private static final int BIRTHDAY_ACCENT = 0xFFFF8CC6;
+    /** Hearts fall at most this often on a birthday, each time Home comes back after that. */
+    private static final long HEART_SHOWER_GAP_MS = 15 * MINUTE_MS;
+    /** SystemClock.elapsedRealtime() of the last heart shower, 0 for none since the launcher started. */
+    private static long lastHeartShowerAt;
     /** hidden_apps as the adapter sees them (config.xml or a theme's config.json): a hidden app gets no card either. */
     private Set<String> hiddenApps = Collections.emptySet();
     private List<Cards.Card> cards = Collections.emptyList();
@@ -314,6 +322,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         dockRow = cfg.dockRow;
         festival = cfg.festival;
         festive = festival.active(LocalDate.now());
+        birthdays = cfg.birthdays;
+        birthday = birthdays.any(LocalDate.now());
         liveTvPkg = cfg.liveTvPackage;
         idleClockMs = cfg.homeIdleClockMinutes * MINUTE_MS;
         liveTvAction = cfg.liveTvAction;
@@ -331,7 +341,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         sky = findViewById(R.id.sky);
         sky.setIntensity(cfg.skyIntensity);
         glass = findViewById(R.id.glass);
-        if (festive) glass.setAccent(festival.accentColor());
+        if (restingAccent() != 0) glass.setAccent(restingAccent());
         ambient = findViewById(R.id.ambient);
         // The glow is one bitmap, so its alpha can be applied while drawing it. Otherwise every frame of
         // a fade renders it into a full-screen offscreen buffer first.
@@ -643,8 +653,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
-        // A festival that started or ended while Home was in the background: rebuild with or without it.
-        if (festive != festival.active(LocalDate.now())) {
+        // A festival or a birthday that started or ended while Home was in the background: rebuild with or without it.
+        if (festive != festival.active(LocalDate.now()) || birthday != birthdays.any(LocalDate.now())) {
             recreate();
             return;
         }
@@ -679,6 +689,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (!reducedMotion && !today.equals(lastPetalShower)) {
                 lastPetalShower = today;
                 handler.postDelayed(this::playPetalShower, 450);
+            }
+        }
+        if (birthday && !reducedMotion) {
+            long now = SystemClock.elapsedRealtime();
+            if (lastHeartShowerAt == 0 || now - lastHeartShowerAt >= HEART_SHOWER_GAP_MS) {
+                lastHeartShowerAt = now;
+                handler.postDelayed(this::playHeartShower, 450);
             }
         }
     }
@@ -1061,7 +1078,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         drop();
         reordering = false;
         adapter.setReordering(false);
-        glass.setAccent(festive ? festival.accentColor() : 0);
+        glass.setAccent(restingAccent());
         btnReorder.setActivated(false);
         List<String> keys = adapter.movableKeys();
         List<String> before = orderAtStart;
@@ -1202,8 +1219,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         glassTargetX = x;
         glassTargetY = y;
         // Cinematic shelf: the highlight glows in the dock app's colour, plain white in the grid.
-        int accent = cinematic && !festive && position < COLUMNS ? adapter.ambientColorAt(position) : 0;
-        if (cinematic && !festive && accent != glassAccent) {
+        boolean ownAccent = cinematic && !festive && !birthday;
+        int accent = ownAccent && position < COLUMNS ? adapter.ambientColorAt(position) : 0;
+        if (ownAccent && accent != glassAccent) {
             glassAccent = accent;
             glass.setAccent(accent);
         }
@@ -1921,7 +1939,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         else if (hour < 22) res = R.string.good_evening;
         else res = R.string.good_night;
         String festiveGreeting = festive ? festival.greetingText() : "";
-        if (!festiveGreeting.isEmpty()) {
+        String birthdayGreeting = birthdayGreeting(birthdays.on(LocalDate.now()));
+        if (!birthdayGreeting.isEmpty()) {
+            greeting.setText(birthdayGreeting);
+            greeting.setTextColor(liftTowardsWhite(BIRTHDAY_ACCENT, 0.25f));
+        } else if (!festiveGreeting.isEmpty()) {
             greeting.setText(festiveGreeting);
             greeting.setTextColor(liftTowardsWhite(festival.accentColor(), 0.25f));
         } else {
@@ -2149,6 +2171,35 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         root.addView(shower, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         shower.play(60, 2200, () -> root.removeView(shower));
+    }
+
+    private void playHeartShower() {
+        if (isFinishing() || isDestroyed()) return;
+        PetalShowerView shower = new PetalShowerView(this);
+        shower.useHearts();
+        root.addView(shower, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        shower.play(48, 3200, () -> root.removeView(shower));
+    }
+
+    /** "Happy birthday, Leo! · 6 years" for one person, "Happy birthday, Maya and Leo!" for two or more. */
+    private String birthdayGreeting(List<Birthdays.Birthday> today) {
+        if (today.isEmpty()) return "";
+        if (today.size() == 1) {
+            Birthdays.Birthday b = today.get(0);
+            String text = getString(R.string.birthday_greeting, b.name);
+            int age = b.age(LocalDate.now());
+            return age > 0 ? text + " · " + getResources().getQuantityString(R.plurals.birthday_age, age, age) : text;
+        }
+        String names = today.get(0).name;
+        for (int i = 1; i < today.size(); i++) names = getString(R.string.birthday_and, names, today.get(i).name);
+        return getString(R.string.birthday_greeting, names);
+    }
+
+    /** The highlight's colour away from reordering: pink on a birthday, the festival's accent, else white (0). */
+    private int restingAccent() {
+        if (birthday) return BIRTHDAY_ACCENT;
+        return festive ? festival.accentColor() : 0;
     }
 
     private static int liftTowardsWhite(int argb, float amount) {

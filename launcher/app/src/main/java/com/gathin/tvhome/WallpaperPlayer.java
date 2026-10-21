@@ -12,6 +12,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 
 import java.io.File;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -39,7 +40,8 @@ final class WallpaperPlayer {
 
     WallpaperPlayer(Context context, FrameLayout root, Config config) {
         this.root = root;
-        files = new ArrayList<>(config.wallpapers);
+        // On a birthday only that person's pictures play; Home is recreated when the day changes (MainActivity).
+        files = new ArrayList<>(Birthdays.wallpapersFor(config.birthdays.on(LocalDate.now()), config.wallpapers));
         interval = config.wallpaperRotationMinutes * 60_000L;
         bitmapConfig = config.wallpaperTrueColor ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
         order = config.wallpaperOrder;
